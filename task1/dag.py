@@ -11,7 +11,6 @@ import ndjson
 
 @dag(start_date=datetime(2023, 8, 8), schedule=None, catchup=False)
 def webhook_api_fuck():
-    # upstream task returning a list or dictionary
     def generate_data():
         """Generate Json file"""
         gen = {
@@ -24,7 +23,6 @@ def webhook_api_fuck():
         """Create number of tasks"""
         return [generate_data() for _ in range(numb)]
 
-    # dynamically mapped task iterating over list returned by an upstream task
     @task
     def post_webhook(**kwargs):
         """Post request which sends data to https://webhook.site/ """
