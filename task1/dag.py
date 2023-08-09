@@ -1,26 +1,58 @@
 from airflow.decorators import dag, task
-from airflow.providers.postgres.hooks.postgres import PostgresHook
-import uuid
-import pendulum
+from pendulum import datetime
 import requests
+import json
+import uuid
 from datetime import date
-import json, sys
 from airflow.models import Variable
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+import ndjson
 
 
-@dag(
-    schedule='@daily',
-    start_date=pendulum.datetime(2023, 8, 7),
-    catchup=False,
-    tags=['Webhook'],
-)
-def webhook_api():
+@dag(start_date=datetime(2023, 8, 8), schedule=None, catchup=False)
+def webhook_api_fuck():
+    # upstream task returning a list or dictionary
     def generate_data():
-        return {
+        """Generate Json file"""
+        gen = {
             "user_id": uuid.uuid4(),
             "event_time": date.today()}
+        return json.dumps(gen, default=str)
 
-    def load_postgres(row):
+    @task
+    def generate_tasks(numb: int = 1):
+        """Create number of tasks"""
+        return [generate_data() for _ in range(numb)]
+
+    # dynamically mapped task iterating over list returned by an upstream task
+    @task
+    def post_webhook(**kwargs):
+        """Post request which sends data to https://webhook.site/ """
+        ti = kwargs['ti']
+        generated = kwargs['generated']
+        url = Variable.get("webhook_url")
+        response = requests.post(
+            url, data=generated, headers={"Content-Type": "application/json"})
+        if response.status_code == 200:
+            ti.xcom_push(key='value from pusher 1', value=dict(response.headers))
+            return dict(response.headers)
+
+    @task
+    def to_json(**kwargs):
+        ti = kwargs['ti']
+        row = ti.xcom_pull(
+            task_ids="post_webhook",
+            key="value from pusher 1")
+        with open("/Users/ihor/Apps/Airflow/sample.json", "w") as outfile:
+            outfile.write(ndjson.dumps(row))
+
+    @task
+    def load_postgres(**kwargs):
+        ti = kwargs['ti']
+        row = ti.xcom_pull(
+            task_ids="post_webhook",
+            key="value from pusher 1")
+        print(row)
         """Load data to Postgres database"""
         try:
             hook = PostgresHook(postgres_conn_id="postgres_webhook")
@@ -42,30 +74,8 @@ def webhook_api():
         except Exception as exception:
             print(f"Failed query execution. Exception: {exception}")
 
-
-    @task()
-    def post_webhook(**kwargs):
-        gen = kwargs['gen']
-        ti = kwargs['ti']
-        url = Variable.get("URL")
-        response = requests.post(
-            url,
-            data=json.dumps(gen, default=str),
-            headers={"Content-Type": "application/json"})
-        if response.status_code == 200:
-            res = json.dumps(dict(response.headers))
-            print(res)
-            ti.xcom_push(key='webhook_json', value=res)
-            load_postgres(dict(response.headers))
-            return dict(response.headers)
-    @task()
-    def load_data(**kwargs):
-        ti = kwargs['ti']
-        json_data = ti.xcom_pull(key='webhook_json', task_ids=['post_webhook'])[0]
-
-    NUM_TASKS = 5
-    filename = [generate_data() for _ in range(NUM_TASKS)]
-    post_webhook.expand(gen=filename)
+    filename = generate_tasks()
+    post_webhook.expand(generated=filename) >> load_postgres()
 
 
-webhook_api()
+webhook_api_fuck()
