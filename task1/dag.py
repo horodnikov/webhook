@@ -39,6 +39,7 @@ def webhook_api_fuck():
 
     @task
     def to_json(**kwargs):
+        """Load data to ndjson"""
         ti = kwargs['ti']
         row = ti.xcom_pull(
             task_ids="post_webhook",
@@ -48,12 +49,11 @@ def webhook_api_fuck():
 
     @task
     def load_postgres(**kwargs):
+        """Load data to Postgres database"""
         ti = kwargs['ti']
         row = ti.xcom_pull(
             task_ids="post_webhook",
             key="value from pusher 1")
-        print(row)
-        """Load data to Postgres database"""
         try:
             hook = PostgresHook(postgres_conn_id="postgres_webhook")
             conn = hook.get_conn()
